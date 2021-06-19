@@ -2,6 +2,7 @@ from functools import cmp_to_key
 import heapq
 import queue
 from typing import Dict, List, Set, Tuple
+import copy
 
 WEIGHT_LIM = 4000000
 
@@ -123,31 +124,45 @@ def main():
         # print(len(result))'''
 
     # fee, weight and parent chain
-    candidates: List[List[int, int, List[str]]] = []
+    '''candidates: List[List[int, int, List[str]]] = []
     for txid in data.keys():
         totalfee, totalweight, txidlist = data[txid].getParentGraph()
         if totalweight <= WEIGHT_LIM:
             txidlist.reverse()
-            candidates.append([totalfee, totalweight, txidlist])
+            candidates.append([totalfee, totalweight, txidlist])'''
+
+    candidates: Dict[str, Tuple[int, int, List[str]]] = {}
+    for txid in data.keys():
+        totalfee, totalweight, txidlist = data[txid].getParentGraph()
+        if totalweight <= WEIGHT_LIM:
+            txidlist.reverse()
+            candidates[txidlist[0]] = [totalfee, totalweight, txidlist]
 
     # fee, weight and list of indexes to candidates
-    dp: List[List[int, List[int]]] = []
+    dp: List[Tuple[int, List[Tuple[str, int]]]] = []
     for i in range(WEIGHT_LIM+1):
         dp.append([0,  []])
 
-    for i in range(0, len(candidates)):
-        for w in range(WEIGHT_LIM, candidates[i][1]-1, -1):
-            if candidates[i][1] <= w:
-                if dp[w-candidates[i][1]][0] + candidates[i][0] > dp[w][0]:
-                    dp[w][1].append(i)
-                    dp[w][0] += candidates[i][0]
+    # for i in range(0, len(candidates)):
+    for root in candidates.keys():
+        curfee = 0
+        curweight = 0
+        for i in range(len(candidates[root][2])):
+            curfee += data[candidates[root][2][i]].fee
+            curweight += data[candidates[root][2][i]].weight
 
-    gotfee = 0
+            for w in range(WEIGHT_LIM, curweight-1, -1):
+                if curweight <= w:
+                    if dp[w-curweight][0] + curfee > dp[w][0]:
+                        dp[w][1] = copy.deepcopy(dp[w-curweight][1])
+                        dp[w][1].append([root, i])
+                        dp[w][0] = dp[w-curweight][0] + curfee
+    print(dp[-1][0])
     with open('block.txt', 'w') as f:
-        for idx in dp[-1][1]:
-            gotfee += candidates[idx][0]
-            for txid in candidates[idx][2]:
-                f.write(txid+'\n')
+        for root, end in dp[-1][-1]:
+            for i in range(end+1):
+                f.write(candidates[root][2][i]+'\n')
+            pass
 
 
 if __name__ == '__main__':
