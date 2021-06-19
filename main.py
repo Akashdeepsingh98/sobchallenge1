@@ -1,8 +1,4 @@
-from functools import cmp_to_key
-import heapq
-import queue
 from typing import Dict, List, Set, Tuple
-import copy
 
 WEIGHT_LIM = 4000000
 
@@ -12,157 +8,128 @@ class MempoolTransaction():
         self.txid: str = txid
         self.fee: int = fee
         self.weight: int = weight
-        self.parents: List[str] = parents
-        self.children: List[str] = []
-        self.selected: bool = False
+        self.parents: List[str] = parents  # list of direct parents
+        self.children: List[str] = []  # list of direct children
+        self.selected: bool = False  # was going to use this but did not
 
-    def __lt__(self, other: 'MempoolTransaction') -> bool:
-        return self.fee < other.fee
-
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # just a string representation for sake of debugging
         res: str = 'Txid: ${} \n Fee: {} \n Weight: {} \n Parents: {} \n Children: {}'.format(
             self.txid, self.fee, self.weight, self.parents, self.children)
         return res
 
-    def getParentGraph(self) -> Tuple[int, int, List[str]]:
-        txidlist: List[str] = []
-        totalfee: int = 0
+    # get all the parents of this transaction in order
+    def getParentGraph(self) -> List[str]:
+        txidlist: List[str] = []  # list of parents topologically sorted
+        # visited transactions must not be visited again
         visited: Set[str] = set()
-        totalfee, totalweight = self.getParentGraphUtil(visited, txidlist)
-        return totalfee, totalweight, txidlist
+        self.getParentGraphUtil(visited, txidlist)
+        return txidlist
 
-    def getParentGraphUtil(self, visited: Set[str], txidlist: List[str]) -> Tuple[int, int]:
-        totalfee: int = 0
-        totalweight: int = 0
-        totalfee += self.fee
-        totalweight += self.weight
+    def getParentGraphUtil(self, visited: Set[str], txidlist: List[str]) -> None:
         visited.add(self.txid)
         txidlist.append(self.txid)
-        for i in range(len(self.parents)):
+        for i in range(len(self.parents)):  # go through all the parents
             if not self.parents[i] in visited:
-                f, w = data[self.parents[i]].getParentGraphUtil(
-                    visited, txidlist)
-                totalfee += f
-                totalweight += w
-        return totalfee, totalweight
+                data[self.parents[i]].getParentGraphUtil(visited, txidlist)
 
 
-data: Dict[str, MempoolTransaction] = {}  # dictionary with txid as key
+# dictionary with txid as key and transactions as value
+data: Dict[str, MempoolTransaction] = {}
 
 
 def main():
 
-    curweight: int = 0
-
     # read file into data dictionary
     with open('mempool.csv') as f:
         f.readline()  # get rid of first line
-        while True:
+        while True:  # read file until EOF
             line = f.readline()
             if not line:
                 break
+            # get rid of surrounding whitespaces, commas and then split on commas within line
             line = line.strip().strip(',').split(',')
             parents = []
             if len(line) == 4:
+                # if there are 4 elements in line list, there is at least one parent and parents are separated by semicolon
                 parents = line[3].strip().split(';')
 
-            # print(line)
-            # break
-
-            if line[0] in data:
+            if line[0] in data:  # if a current txid already exists due to following for loop then we need to update the provided temporary weight and fees
                 data[line[0]].fee = int(line[1])
                 data[line[0]].weight = int(line[2])
                 data[line[0]].parents = parents
-            else:
+            else: # if it does not exist then just make a new object for transaction
                 data[line[0]] = MempoolTransaction(
                     line[0], int(line[1]), int(line[2]), parents)
 
-            for i in range(len(parents)):
+            for i in range(len(parents)): # go through the parents on this line and set the children it has
                 if not parents[i] in data:
                     data[parents[i]] = MempoolTransaction(parents[i], 0, 0)
                 data[parents[i]].children.append(line[0])
-    print(len(data))
-    # print(data['79c51c9d4124c5cbb37a85263748dcf44e182dff83561fa3087f0e9e43f41c33'])
 
-    # store sum of each graph and nodes of each graph
-    # ratio of fee by weight, fee, weight, txid list
-    '''result: List[Tuple[int, int, int, List[str]]] = []
-    for txid in data.keys():
-        totalfee, totalweight, txidlist = data[txid].getParentGraph()
-        # print(totalweight)
-        if totalweight > WEIGHT_LIM:
+    candidates: Dict[str, List[Tuple[int, int, str]]] = {} # the candidate directed acyclic graphs 
+    # each key is a root, it has no parent
+    # each value is a list of topologically sorted transactions with prefix sum of fees and weight
+    
+    for txid in data.keys(): # prepare the candidates dictionary 
+        txidlist = data[txid].getParentGraph()
+        txidlist.reverse()
+        candidates[txidlist[0]] = [
+            [
+                data[txidlist[0]].fee,
+                data[txidlist[0]].weight,
+                txidlist[0]
+            ]
+        ]
+        for i in range(1, len(txidlist)):
+            candidates[txidlist[0]].append([
+                data[txidlist[i]].fee + candidates[txidlist[0]][-1][0],
+                data[txidlist[i]].weight + candidates[txidlist[0]][-1][1],
+                txidlist[i]
+            ])
+
+    curweight: int = 0  # it will store weight of currently selected transactions
+
+    # the result array just stores a list with candidate graph root txid and the final index upto which transactions are included from candidates dictionary
+    result: List[Tuple[str, int]] = []
+    # the final index was quite unnecessary for this approach and could have been useful for another one I had in mind
+
+    # go through each candidate
+    for cand in candidates.keys():
+
+        # exclude graphs whose weight is greater than the limit
+        if candidates[cand][-1][1] > WEIGHT_LIM:
             continue
-        if totalweight <= WEIGHT_LIM-curweight:
-            curweight += totalweight
-            txidlist.reverse()
-            result.append(
-                [totalfee/totalweight, totalfee, totalweight, txidlist])
-            result.sort(key=lambda x: x[1])
-            # radix sort so that weight is the main criteria for and next is fee
-            #result.sort(key=lambda x: x[0])
-            #result.sort(key=lambda x: x[1])
+
+        # check if weight of graph can fit into result
+        if candidates[cand][-1][1] <= WEIGHT_LIM-curweight:
+            result.append([cand, len(candidates[cand])-1])
+            curweight += candidates[cand][-1][1]
+            result.sort(
+                key=lambda x: candidates[x[0]][x[1]][1])
+        # if cannot fit then replace other graphs with lesser fees with this current graph
         else:
             end = 0
             curfee = 0
             curweight2 = 0
+            # get all graphs whose total fees is less than current candidate's fees
             while True:
-                if end >= len(result) or curfee+result[end][1] > totalfee:
+                if end >= len(result) or curfee+candidates[result[end][0]][-1][0] > candidates[cand][-1][0]:
                     break
-                curfee += result[end][1]
-                curweight2 += result[end][2]
+                curfee += candidates[result[end][0]][result[end][1]][0]
+                curweight2 += candidates[result[end][0]][result[end][1]][1]
                 end += 1
             end -= 1
-            if end == -1:
-                pass
-            else:
+            if end != -1:
                 result = result[end+1:]
-                curweight -= curweight2
-                curweight += totalweight
-                result.append(
-                    [totalfee/totalweight, totalfee, totalweight, txidlist])
-                result.sort(key=lambda x: x[1])
-        # print(len(result))'''
+                curweight -= curweight2 # update weight by subtracting removed graph weights and adding new graph weight
+                curweight += candidates[cand][-1][1]
+                result.append([cand, len(candidates[cand])-1])
+                result.sort(key=lambda x: candidates[x[0]][x[1]][1])
 
-    # fee, weight and parent chain
-    '''candidates: List[List[int, int, List[str]]] = []
-    for txid in data.keys():
-        totalfee, totalweight, txidlist = data[txid].getParentGraph()
-        if totalweight <= WEIGHT_LIM:
-            txidlist.reverse()
-            candidates.append([totalfee, totalweight, txidlist])'''
-
-    candidates: Dict[str, Tuple[int, int, List[str]]] = {}
-    for txid in data.keys():
-        totalfee, totalweight, txidlist = data[txid].getParentGraph()
-        if totalweight <= WEIGHT_LIM:
-            txidlist.reverse()
-            candidates[txidlist[0]] = [totalfee, totalweight, txidlist]
-
-    # fee, weight and list of indexes to candidates
-    dp: List[Tuple[int, List[Tuple[str, int]]]] = []
-    for i in range(WEIGHT_LIM+1):
-        dp.append([0,  []])
-
-    # for i in range(0, len(candidates)):
-    for root in candidates.keys():
-        curfee = 0
-        curweight = 0
-        for i in range(len(candidates[root][2])):
-            curfee += data[candidates[root][2][i]].fee
-            curweight += data[candidates[root][2][i]].weight
-
-            for w in range(WEIGHT_LIM, curweight-1, -1):
-                if curweight <= w:
-                    if dp[w-curweight][0] + curfee > dp[w][0]:
-                        dp[w][1] = copy.deepcopy(dp[w-curweight][1])
-                        dp[w][1].append([root, i])
-                        dp[w][0] = dp[w-curweight][0] + curfee
-    print(dp[-1][0])
     with open('block.txt', 'w') as f:
-        for root, end in dp[-1][-1]:
-            for i in range(end+1):
-                f.write(candidates[root][2][i]+'\n')
-            pass
+        for cand in result:
+            for i in range(cand[1]+1):
+                f.write(candidates[cand[0]][i][2]+'\n')
 
 
 if __name__ == '__main__':
