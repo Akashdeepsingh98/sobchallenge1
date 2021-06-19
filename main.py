@@ -85,7 +85,7 @@ def main():
 
     # store sum of each graph and nodes of each graph
     # ratio of fee by weight, fee, weight, txid list
-    result: List[Tuple[int, int, int, List[str]]] = []
+    '''result: List[Tuple[int, int, int, List[str]]] = []
     for txid in data.keys():
         totalfee, totalweight, txidlist = data[txid].getParentGraph()
         # print(totalweight)
@@ -120,15 +120,34 @@ def main():
                 result.append(
                     [totalfee/totalweight, totalfee, totalweight, txidlist])
                 result.sort(key=lambda x: x[1])
-        # print(len(result))
+        # print(len(result))'''
 
+    # fee, weight and parent chain
+    candidates: List[List[int, int, List[str]]] = []
+    for txid in data.keys():
+        totalfee, totalweight, txidlist = data[txid].getParentGraph()
+        if totalweight <= WEIGHT_LIM:
+            txidlist.reverse()
+            candidates.append([totalfee, totalweight, txidlist])
+
+    # fee, weight and list of indexes to candidates
+    dp: List[List[int, List[int]]] = []
+    for i in range(WEIGHT_LIM+1):
+        dp.append([0,  []])
+
+    for i in range(0, len(candidates)):
+        for w in range(WEIGHT_LIM, candidates[i][1]-1, -1):
+            if candidates[i][1] <= w:
+                if dp[w-candidates[i][1]][0] + candidates[i][0] > dp[w][0]:
+                    dp[w][1].append(i)
+                    dp[w][0] += candidates[i][0]
+
+    gotfee = 0
     with open('block.txt', 'w') as f:
-        for item in result:
-            if len(item[3]) > 1:
-                print(item[3])
-            for txid in item[3]:
-                f.write(txid)
-                f.write('\n')
+        for idx in dp[-1][1]:
+            gotfee += candidates[idx][0]
+            for txid in candidates[idx][2]:
+                f.write(txid+'\n')
 
 
 if __name__ == '__main__':
